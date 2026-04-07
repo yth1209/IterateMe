@@ -9,12 +9,13 @@ export class InterviewsController {
   constructor(private readonly interviewsService: InterviewsService) {}
 
   @Post('generate')
-  async generateQuestion(
+  async generateQuestions(
     @Req() req: Request & { user: { id: number; email: string } },
-    @Body('topic') topic: string,
+    @Body('topic') topic?: string,
+    @Body('n') n: number = 5,
   ) {
-    const question = await this.interviewsService.generateQuestion(req.user.id, topic);
-    return { question };
+    const questions = await this.interviewsService.generateQuestions(req.user.id, n || 5, topic);
+    return { questions };
   }
 
   @Post('evaluate')

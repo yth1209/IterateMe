@@ -1,38 +1,35 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import { HumanMessage } from '@langchain/core/messages';
 import { GoogleGenAI } from '@google/genai';
 
 @Injectable()
 export class AiService implements OnModuleInit {
-  private ai: GoogleGenAI;
+  private llm: ChatGoogleGenerativeAI;
+  private genai: GoogleGenAI;
 
   constructor(private configService: ConfigService) {}
 
   onModuleInit() {
-    this.ai = new GoogleGenAI({
-      apiKey: this.configService.get<string>('GEMINI_API_KEY'),
-    });
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    const model = this.configService.get<string>('AI_MODEL', 'gemini-2.0-flash');
+
+    this.llm = new ChatGoogleGenerativeAI({ apiKey, model });
+    this.genai = new GoogleGenAI({ apiKey });
   }
 
-  /**
-   * 주어진 텍스트의 768차원 임베딩 벡터 반환
-   */
   async generateEmbedding(text: string): Promise<number[]> {
-    const response = await this.ai.models.embedContent({
-      model: 'text-embedding-004',
+    const embeddingModel = this.configService.get<string>('AI_EMBEDDING_MODEL', 'text-embedding-004');
+    const response = await this.genai.models.embedContent({
+      model: embeddingModel,
       contents: text,
     });
     return response.embeddings?.[0]?.values || [];
   }
 
-  /**
-   * Gemini 2.5 Flash를 이용한 프롬프트 컨텐츠 생성
-   */
   async generateContent(prompt: string): Promise<string> {
-    const response = await this.ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-    });
-    return response.text || '';
+    const response = await this.llm.invoke([new HumanMessage(prompt)]);
+    return response.content as string;
   }
 }

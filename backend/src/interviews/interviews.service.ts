@@ -18,29 +18,63 @@ export class InterviewsService {
   ) {}
 
   /**
-   * 1. 질문 생성 (Adaptive Questioning)
+   * 1. N개 질문 일괄 생성 (Adaptive Questioning)
    */
-  async generateQuestion(userId: number, topic: string): Promise<string> {
+  async generateQuestions(userId: number, n: number, topic?: string): Promise<string[]> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    // 기존의 틀렸던 이력 (Vector DB에서 검색)
-    // 임의의 검색 쿼리 사용 (예: topic에 대한 일반적인 임베딩 벡터로 검색)
-    const topicEmbedding = await this.aiService.generateEmbedding(topic);
-    const pastMistakes = await this.pineconeService.queryVectors(topicEmbedding, 3, { userId });
-    
-    // 프롬프트 작성
-    let prompt = `너는 시니어 서버 개발자이자 기술 면접관이야. 다음 주제에 대해 면접 질문을 하나 생성해줘: ${topic}\n`;
-    if (user.resume) {
-      prompt += `지원자의 이력 내용: ${user.resume}\n(이력과 연관지어서 질문할 것)\n`;
-    }
-    if (pastMistakes.length > 0) {
-      prompt += `지원자가 이전에 틀렸던 개념들: ${pastMistakes.map(m => m.metadata?.question).join(', ')}\n(이러한 취약점을 조금 변형해서 다시 물어보는 Adaptive 질문을 만들어줘)\n`;
-    }
-    prompt += `형식: [면접 질문만 출력할 것]`;
+    // DB에서 과거 기록 전체 조회
+    const history = await this.interviewRepo.find({
+      where: { user: { id: userId } },
+      select: ['question', 'isCorrect'],
+    });
 
-    const generatedQuestion = await this.aiService.generateContent(prompt);
-    return generatedQuestion;
+    const correctQuestions = history
+      .filter((h) => h.isCorrect)
+      .map((h) => h.question);
+
+    const wrongQuestions = history
+      .filter((h) => !h.isCorrect)
+      .map((h) => h.question);
+
+    // 프롬프트 조립
+    let prompt = `너는 시니어 서버 개발자이자 기술 면접관이야.\n`;
+
+    if (topic) {
+      prompt += `주제: ${topic}\n`;
+    }
+    if (user.resume) {
+      prompt += `지원자 이력서:\n${user.resume}\n`;
+    }
+    if (correctQuestions.length > 0) {
+      prompt += `\n이미 정확히 아는 주제 (출제 금지):\n${correctQuestions.slice(0, 30).join('\n')}\n`;
+    }
+    if (wrongQuestions.length > 0) {
+      prompt += `\n취약 개념 (변형하여 반드시 포함):\n${wrongQuestions.slice(0, 20).join('\n')}\n`;
+    }
+
+    prompt += `\n위 조건을 반영하여 면접 질문 ${n}개를 생성해.
+JSON 배열 형태로만 출력: ["질문1", "질문2", ...]`;
+
+    const raw = await this.aiService.generateContent(prompt);
+    return this.parseQuestionsArray(raw, n);
+  }
+
+  private parseQuestionsArray(raw: string, n: number): string[] {
+    try {
+      const match = raw.match(/\[[\s\S]*\]/);
+      const parsed = JSON.parse(match ? match[0] : raw);
+      if (Array.isArray(parsed)) return parsed.slice(0, n);
+    } catch {
+      // fallback: 줄바꿈 기준 split
+      const lines = raw
+        .split('\n')
+        .map((l) => l.replace(/^[\d\.\-\*\s]+/, '').trim())
+        .filter(Boolean);
+      if (lines.length > 0) return lines.slice(0, n);
+    }
+    return [raw.trim()];
   }
 
   /**
@@ -50,7 +84,6 @@ export class InterviewsService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    // 평가 프롬프트
     const prompt = `너는 시니어 면접관이야. 아래 면접 질문과 지원자의 답변을 평가해줘.
 질문: ${question}
 답변: ${answer}
@@ -58,18 +91,15 @@ export class InterviewsService {
 {"score": (0~100 사이의 점수), "feedback": "(모범 답안 및 상세한 보완점)", "isCorrect": (70점 이상이면 true, 아니면 false)}`;
 
     const evaluationText = await this.aiService.generateContent(prompt);
-    
-    // JSON 파싱 (마크다운 등이 섞여 있을 수 있으므로 정규식 처리 필요할 수 있음)
+
     let parsedEvaluation;
     try {
       const jsonMatch = evaluationText.match(/\{[\s\S]*?\}/);
       parsedEvaluation = JSON.parse(jsonMatch ? jsonMatch[0] : evaluationText);
-    } catch (e) {
-      // 파싱 실패 시 기본값
-      parsedEvaluation = { score: 0, feedback: "평가 처리 중 요류 발생: " + evaluationText, isCorrect: false };
+    } catch {
+      parsedEvaluation = { score: 0, feedback: '평가 처리 중 오류 발생: ' + evaluationText, isCorrect: false };
     }
 
-    // DB에 기록
     const history = this.interviewRepo.create({
       user,
       question,
@@ -80,17 +110,16 @@ export class InterviewsService {
     });
     const savedHistory = await this.interviewRepo.save(history);
 
-    // 오답일 경우 Vector DB에 저장하여 추후 Adaptive Questioning에 활용 (RAG)
-    if (!parsedEvaluation.isCorrect) {
-      const vector = await this.aiService.generateEmbedding(question + ' ' + answer);
-      await this.pineconeService.upsertVectors([
-        {
-          id: `history_${savedHistory.id}`,
-          values: vector,
-          metadata: { userId, question, isCorrect: false }
-        }
-      ]);
-    }
+    // if (!parsedEvaluation.isCorrect) {
+    //   const vector = await this.aiService.generateEmbedding(question + ' ' + answer);
+    //   await this.pineconeService.upsertVectors([
+    //     {
+    //       id: `history_${savedHistory.id}`,
+    //       values: vector,
+    //       metadata: { userId, question, isCorrect: false },
+    //     },
+    //   ]);
+    // }
 
     return savedHistory;
   }

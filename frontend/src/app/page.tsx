@@ -7,37 +7,52 @@ import api from '@/lib/api';
 import { clearAccessToken } from '@/lib/auth';
 
 const NAV_ITEMS = [
-  { icon: '⚡', label: '대시보드', href: '/', active: true },
-  { icon: '🎯', label: '면접 훈련', href: '/interview', active: false },
-  { icon: '📓', label: '오답 노트', href: '/notes', active: false },
-  { icon: '📊', label: '성장 분석', href: '/analytics', active: false },
+  { icon: '⚡', label: '대시보드',    href: '/',          active: true },
+  { icon: '🎯', label: '면접 훈련',  href: '/interview', active: false },
+  { icon: '📓', label: '오답 노트',  href: '/notes',     active: false },
+  { icon: '📊', label: '성장 분석',  href: '/analytics', active: false },
+  { icon: '📄', label: '나의 이력서', href: '/resume',    active: false },
 ];
 
 interface Insight {
   id: number;
   source: string;
   originalTitle: string;
-  summary: string;
-  url: string;
+  body: string;
+  category: string;
   createdAt: string;
 }
 
-const SOURCE_STYLE: Record<string, { tag: string; color: string }> = {
-  Wanted:      { tag: 'Trend',      color: 'text-cyan-400 bg-cyan-400/10' },
-  Programmers: { tag: 'Job Market', color: 'text-violet-400 bg-violet-400/10' },
-  JobKorea:    { tag: 'Security',   color: 'text-rose-400 bg-rose-400/10' },
+interface Stats {
+  totalStudyDays: number;
+  totalSessions: number;
+  avgScore: number;
+  todayCount: number;
+}
+
+const CATEGORY_STYLE: Record<string, { tag: string; color: string }> = {
+  company_trends: { tag: '🏢 기업 동향',  color: 'text-cyan-400 bg-cyan-400/10' },
+  vibe_coding:    { tag: '🤖 바이브 코딩', color: 'text-violet-400 bg-violet-400/10' },
+  cse:            { tag: '📚 CSE 지식',    color: 'text-rose-400 bg-rose-400/10' },
 };
 
 export default function Dashboard() {
   const router = useRouter();
   const [insights, setInsights] = useState<Insight[]>([]);
   const [insightsLoading, setInsightsLoading] = useState(true);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   useEffect(() => {
     api.get('/insights?limit=5')
-      .then(({ data }) => setInsights(data))
+      .then(({ data }) => setInsights(data.items ?? []))
       .catch(() => setInsights([]))
       .finally(() => setInsightsLoading(false));
+
+    api.get('/users/stats')
+      .then(({ data }) => setStats(data))
+      .catch(() => setStats(null))
+      .finally(() => setStatsLoading(false));
   }, []);
 
   const handleLogout = async () => {
@@ -48,11 +63,17 @@ export default function Dashboard() {
     router.push('/login');
   };
 
+  const statCards = [
+    { label: '누적 학습일',  value: statsLoading ? null : `${stats?.totalStudyDays ?? 0}일`,  icon: '🔥', color: 'from-orange-500/20 to-rose-500/20 border-orange-500/20' },
+    { label: '오늘의 훈련',  value: statsLoading ? null : `${stats?.todayCount ?? 0}회 완료`,  icon: '🎯', color: 'from-indigo-500/20 to-violet-500/20 border-indigo-500/20' },
+    { label: '평균 점수',    value: statsLoading ? null : `${stats?.avgScore ?? 0}점`,          icon: '📈', color: 'from-emerald-500/20 to-cyan-500/20 border-emerald-500/20' },
+    { label: '총 훈련 횟수', value: statsLoading ? null : `${stats?.totalSessions ?? 0}회`,    icon: '⚡', color: 'from-yellow-500/20 to-amber-500/20 border-yellow-500/20' },
+  ];
+
   return (
     <div className="min-h-screen bg-[#070711] text-slate-100 flex">
       {/* 사이드바 */}
       <aside className="hidden lg:flex flex-col w-64 border-r border-white/5 bg-white/[0.02] shrink-0">
-        {/* 로고 */}
         <div className="px-6 py-7 border-b border-white/5">
           <span className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400">
             IterateMe
@@ -60,7 +81,6 @@ export default function Dashboard() {
           <p className="text-xs text-slate-500 mt-1">Daily Growth Platform</p>
         </div>
 
-        {/* 네비게이션 */}
         <nav className="flex-1 px-3 py-6 space-y-1">
           {NAV_ITEMS.map((item) => (
             <Link
@@ -78,7 +98,6 @@ export default function Dashboard() {
           ))}
         </nav>
 
-        {/* 로그아웃 */}
         <div className="px-3 pb-6">
           <button
             onClick={handleLogout}
@@ -91,7 +110,6 @@ export default function Dashboard() {
 
       {/* 메인 콘텐츠 */}
       <main className="flex-1 min-w-0 overflow-auto">
-        {/* 헤더 */}
         <header className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#070711]/80 backdrop-blur-md">
           <div>
             <h2 className="text-xl font-bold text-white">오늘의 성장 리포트</h2>
@@ -110,15 +128,14 @@ export default function Dashboard() {
         <div className="px-6 py-8 max-w-5xl mx-auto space-y-10">
           {/* 스탯 카드 */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { label: '연속 학습', value: '4일', icon: '🔥', color: 'from-orange-500/20 to-rose-500/20 border-orange-500/20' },
-              { label: '오늘의 목표', value: '10문제', icon: '🎯', color: 'from-indigo-500/20 to-violet-500/20 border-indigo-500/20' },
-              { label: '평균 점수', value: '82점', icon: '📈', color: 'from-emerald-500/20 to-cyan-500/20 border-emerald-500/20' },
-              { label: '총 훈련 횟수', value: '47회', icon: '⚡', color: 'from-yellow-500/20 to-amber-500/20 border-yellow-500/20' },
-            ].map((stat) => (
+            {statCards.map((stat) => (
               <div key={stat.label} className={`bg-gradient-to-br ${stat.color} border rounded-2xl p-5`}>
                 <div className="text-2xl mb-2">{stat.icon}</div>
-                <div className="text-2xl font-black text-white">{stat.value}</div>
+                {stat.value === null ? (
+                  <div className="h-8 bg-slate-800 rounded animate-pulse w-16 mb-1" />
+                ) : (
+                  <div className="text-2xl font-black text-white">{stat.value}</div>
+                )}
                 <div className="text-xs text-slate-400 mt-1 font-medium">{stat.label}</div>
               </div>
             ))}
@@ -131,12 +148,13 @@ export default function Dashboard() {
                 <span className="w-1.5 h-5 bg-gradient-to-b from-indigo-400 to-cyan-400 rounded-full inline-block" />
                 오늘의 기술 인사이트
               </h2>
-              <button className="text-xs text-slate-500 hover:text-indigo-400 transition-colors font-medium">전체 보기 →</button>
+              <Link href="/insights" className="text-xs text-slate-500 hover:text-indigo-400 transition-colors font-medium">
+                전체 보기 →
+              </Link>
             </div>
 
             <div className="space-y-3">
               {insightsLoading ? (
-                // 로딩 스켈레톤
                 [...Array(3)].map((_, i) => (
                   <div key={i} className="p-5 rounded-2xl bg-white/[0.02] border border-white/5 animate-pulse">
                     <div className="h-4 bg-slate-800 rounded w-16 mb-3" />
@@ -146,7 +164,7 @@ export default function Dashboard() {
                 ))
               ) : insights.length > 0 ? (
                 insights.map((item) => {
-                  const style = SOURCE_STYLE[item.source] ?? { tag: item.source, color: 'text-slate-400 bg-slate-400/10' };
+                  const style = CATEGORY_STYLE[item.category] ?? { tag: item.source, color: 'text-slate-400 bg-slate-400/10' };
                   return (
                     <article
                       key={item.id}
@@ -159,8 +177,7 @@ export default function Dashboard() {
                             {style.tag}
                           </div>
                           <h3 className="text-base font-semibold text-slate-100 mb-2 leading-snug">{item.originalTitle}</h3>
-                          <p className="text-sm text-slate-400 line-clamp-2">{item.summary}</p>
-                          <div className="mt-3 text-xs text-slate-600 font-medium">{item.source} 스크래핑</div>
+                          <p className="text-sm text-slate-400 line-clamp-2">{item.body.slice(0, 150)}...</p>
                         </div>
                         <div className="text-slate-600 group-hover:text-indigo-400 transition-colors shrink-0 text-lg">→</div>
                       </div>
@@ -169,20 +186,23 @@ export default function Dashboard() {
                 })
               ) : (
                 <div className="p-8 text-center text-slate-500 text-sm rounded-2xl border border-white/5">
-                  아직 스크래핑된 인사이트가 없습니다. 잠시 후 다시 확인해주세요.
+                  아직 인사이트가 없습니다.{' '}
+                  <Link href="/insights" className="text-indigo-400 hover:underline">
+                    인사이트 업데이트하기 →
+                  </Link>
                 </div>
               )}
             </div>
           </section>
 
-          {/* 취약점 분석 CTA */}
+          {/* 면접 시작 CTA */}
           <section className="relative rounded-3xl overflow-hidden p-8 bg-gradient-to-br from-indigo-900/40 via-violet-900/20 to-transparent border border-indigo-500/20">
             <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 blur-3xl rounded-full pointer-events-none" />
             <div className="relative">
               <div className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-3">AI 분석 준비 완료</div>
               <h3 className="text-2xl font-black text-white mb-2">오늘의 맞춤형 면접 세션</h3>
               <p className="text-slate-400 text-sm mb-6 max-w-lg">
-                지난 3회의 오답 패턴을 분석했습니다. <strong className="text-slate-200">DB 인덱스 설계</strong>와 <strong className="text-slate-200">비동기 처리</strong> 개념에 집중한 Adaptive 질문을 준비했습니다.
+                과거 오답 패턴을 분석하여 취약점 중심의 Adaptive 질문을 준비합니다.
               </p>
               <Link
                 href="/interview"
